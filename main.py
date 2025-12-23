@@ -1,18 +1,20 @@
 """
 호텔 직원 급여 자동 생성 메인 스크립트
 """
+import argparse
 from datetime import datetime
 from payroll_statement import PayrollStatementGenerator
 from payment_transfer_list import PaymentTransferListGenerator
 from sample_data import get_sample_employees
 
 
-def main():
+def main(year: int = None, month: int = None):
     """메인 함수"""
-    # 현재 연월
-    now = datetime.now()
-    year = now.year
-    month = now.month
+    # 현재 연월 또는 지정된 연월
+    if year is None or month is None:
+        now = datetime.now()
+        year = year or now.year
+        month = month or now.month
     
     print(f"=== 호텔 직원 급여 자동 생성 시스템 ===")
     print(f"처리 기간: {year}년 {month}월\n")
@@ -47,4 +49,9 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    parser = argparse.ArgumentParser(description='호텔 직원 급여 자동 생성 시스템')
+    parser.add_argument('--year', type=int, help='급여 처리 연도 (기본값: 현재 연도)')
+    parser.add_argument('--month', type=int, help='급여 처리 월 (기본값: 현재 월)')
+    
+    args = parser.parse_args()
+    main(year=args.year, month=args.month)

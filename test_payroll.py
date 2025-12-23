@@ -2,6 +2,7 @@
 호텔 급여 시스템 테스트
 """
 import os
+import sys
 from employee import Employee
 from payroll_statement import PayrollStatementGenerator
 from payment_transfer_list import PaymentTransferListGenerator
@@ -181,4 +182,4 @@ def main():
 
 
 if __name__ == "__main__":
-    exit(main())
+    sys.exit(main())
