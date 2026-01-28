@@ -3,18 +3,42 @@ import glob
 from openpyxl import load_workbook
 import calendar
 
-# 현재 년월 설정 (필요시 수정 가능)
-current_year = "2025"
-current_month = "12"
 
-# 해당 월의 일수 계산
-days_in_month = calendar.monthrange(int(current_year), int(current_month))[1]
 
 # 파일 경로 - 그리드인_급여대장으로 시작하는 파일 자동 찾기
-gridin_files = glob.glob("그리드인_급여대장*.xlsx")
+gridin_files = []
+for ext in ("xlsx", "xls", "xlsm", "xlsb"):
+    gridin_files += glob.glob(f"그리드인_급여대장*.{ext}")
 if not gridin_files:
     print("❌ 오류: '그리드인_급여대장'으로 시작하는 파일을 찾을 수 없습니다.")
     exit(1)
+
+# 급여대장 1행에서 년월 추출
+df_preview = pd.read_excel(gridin_files[0], header=None, nrows=2)
+pay_title_row = df_preview.iloc[0]
+pay_title_str = ''
+for cell in pay_title_row:
+    if isinstance(cell, str) and '급여대장' in cell:
+        pay_title_str = cell
+        break
+
+import re
+pay_year = ""
+pay_month = ""
+match = re.search(r"(20[0-9]{2})년\s*([0-9]{1,2})월", pay_title_str)
+if match:
+    pay_year = match.group(1)
+    pay_month = match.group(2).zfill(2)
+else:
+    # fallback: 기존 값 사용
+    pay_year = "2025"
+    pay_month = "12"
+
+current_year = pay_year
+current_month = pay_month
+
+# 해당 월의 일수 계산
+days_in_month = calendar.monthrange(int(current_year), int(current_month))[1]
 
 input_file = gridin_files[0]  # 첫 번째 매칭 파일 사용
 template_file = "taxaspay_최종본.xlsx"  # 최종본 템플릿 사용
@@ -28,6 +52,13 @@ print(f"\n📂 입력 파일: {input_file}")
 # 1. 그리드인_급여대장 읽기
 print("\n[1/3] 그리드인_급여대장.xlsx 읽기...")
 df_gridin = pd.read_excel(input_file, header=None)
+print("\n[디버그] 급여대장 데이터프레임 상위 20개 행 (인덱스 포함):")
+for i in range(min(20, len(df_gridin))):
+    print(f"[{i}] {list(df_gridin.iloc[i])}")
+df_gridin = pd.read_excel(input_file, header=None)
+print("\n[디버그] 급여대장 데이터프레임 상위 20개 행 (인덱스 포함):")
+for i in range(min(20, len(df_gridin))):
+    print(f"[{i}] {list(df_gridin.iloc[i])}")
 
 # Worker.xlsx에서 사원 정보 읽기 (주민등록번호)
 try:
@@ -76,75 +107,161 @@ except Exception as e:
 data_rows = []
 employee_list = []
 
-for idx in range(2, len(df_gridin)):
-    row = df_gridin.iloc[idx]
-    # 사원코드가 숫자인 행만 처리 (합계 행 제외)
-    if pd.notna(row[0]) and str(row[0]).replace('.', '').isdigit():
-        employee_name = row[1]  # 사원명
-        
-        # 이름에서 (재) 제거
-        employee_name = employee_name.replace('(재)', '').strip()
-        
-        # worker.xlsx에서 주민등록번호와 근무 정보 찾기
-        resident_number = "확인필요"
-        days_per_week = 0
-        hours_per_day = 0
-        if df_worker is not None:
-            worker_info = df_worker[df_worker['이름'] == employee_name]
-            if not worker_info.empty:
-                resident_number = worker_info.iloc[0]['주민등록번호']
-                days_per_week = worker_info.iloc[0]['주당근무일자']
-                hours_per_day = worker_info.iloc[0]['일당근무시간']
-        
-        # 근무일수 계산: 주당 7일 근무면 해당 월 전체 일수, 아니면 비율 계산
-        if days_per_week == 7:
-            work_days = days_in_month
-        else:
-            work_days = int((days_in_month / 7) * days_per_week)
-        
-        # 근로시간 계산: 근무일수 * 일당근무시간
-        work_hours = work_days * hours_per_day
-        
-        # 숫자 변환 함수
-        def to_int(value):
-            if pd.isna(value) or value == 0 or value == '':
-                return 0
-            try:
-                if isinstance(value, str):
-                    value = value.replace(',', '')
-                return int(float(value))
-            except:
-                return 0
-        
-        # df_gridin.iloc[1]의 컬럼 인덱스:
-        # 5:기본급, 6:상여, 7:식대, 8:주휴수당, 9:연장수당, 10:야간수당
-        # 11:미지급분, 12:휴일기본수당, 13:연차수당, 14:휴일근로수당
-        # 16:국민연금, 17:건강보험, 18:고용보험, 19:장기요양보험료
-        # 20:소득세, 21:지방소득세
-        
-        employee_list.append({
-            '이름': employee_name,
-            '주민등록번호': resident_number,
-            '귀속월': f'{current_year}{current_month}',
-            '근무일수': work_days,
-            '근로시간': work_hours,
-            '기본급': to_int(row[5]),
-            '상여': to_int(row[6]),
-            '식대': to_int(row[7]),
-            '주휴수당': to_int(row[8]),
-            '연장수당': to_int(row[9]),
-            '야간수당': to_int(row[10]),
-            '미지급분': to_int(row[11]),
-            '휴일기본수당': to_int(row[12]),
-            '연차수당': to_int(row[13]),
-            '휴일근무수당': to_int(row[14]),
-            '국민연금': to_int(row[16]),
-            '건강보험': to_int(row[17]),
-            '고용보험': to_int(row[18]),
-            '장기요양보험': to_int(row[19]),
-            '소득세': to_int(row[20]),
-            '지방소득세': to_int(row[21])
-        })
+
+# 3행씩 한 세트로 처리 (5,6,7행이 한 직원)
+def to_int(value):
+    if pd.isna(value) or value == 0 or value == '':
+        return 0
+    try:
+        if isinstance(value, str):
+            value = value.replace(',', '')
+        return int(float(value))
+    except:
+        return 0
+
+for idx in range(2, len(df_gridin), 3):
+    if idx + 2 >= len(df_gridin):
+        break  # 남은 행이 3개 미만이면 종료
+    row1 = df_gridin.iloc[idx]    # 5행: 기본정보/지급
+    row2 = df_gridin.iloc[idx+1]  # 6행: 공제
+    row3 = df_gridin.iloc[idx+2]  # 7행: 실지급 등
+
+    # 사원명 추출 (row1의 1번 컬럼)
+    employee_name = str(row1[1]).replace('(재)', '').strip() if pd.notna(row1[1]) else "확인필요"
+    # 사원번호와 이름이 모두 있는 경우만 직원으로 인정
+    has_empno = pd.notna(row1[0]) and str(row1[0]).strip().isdigit()
+    has_name = pd.notna(row1[1]) and str(row1[1]).strip() != ''
+    is_header = False
+    if has_name:
+        name_str = str(row1[1]).replace(' ', '').replace('\xa0', '').replace('\x00', '')
+        if name_str in ['성명', '성명']:
+            is_header = True
+    if not (has_empno and has_name) or is_header:
+        continue
+    # worker.xlsx에서 주민등록번호와 근무 정보 찾기
+    resident_number = "확인필요"
+    days_per_week = 0
+    hours_per_day = 0
+    if df_worker is not None:
+        worker_info = df_worker[df_worker['이름'] == employee_name]
+        if not worker_info.empty:
+            resident_number = worker_info.iloc[0]['주민등록번호']
+            days_per_week = worker_info.iloc[0]['주당근무일자']
+            hours_per_day = worker_info.iloc[0]['일당근무시간']
+    # 근무일수 계산: 주당 7일 근무면 해당 월 전체 일수, 아니면 비율 계산
+    if days_per_week == 7:
+        work_days = days_in_month
+    else:
+        work_days = int((days_in_month / 7) * days_per_week)
+    # 근로시간 계산: 근무일수 * 일당근무시간
+    work_hours = work_days * hours_per_day
+    # 디버그: 각 항목의 원본 값과 변환값 출력
+    print(f"[디버그] {employee_name} 기본급: {row1[2]}, 변환: {to_int(row1[2])}")
+    print(f"[디버그] {employee_name} 식대: {row1[3]}, 변환: {to_int(row1[3])}")
+    print(f"[디버그] {employee_name} 주휴수당: {row1[4]}, 변환: {to_int(row1[4])}")
+    print(f"[디버그] {employee_name} 연차수당: {row1[13]}, 변환: {to_int(row1[13])}")
+    print(f"[디버그] {employee_name} 국민연금: {row1[9]}, 변환: {to_int(row1[9])}")
+    print(f"[디버그] {employee_name} 차인지급액 원본: {row3[14]}, 변환값: {to_int(row3[14])}")
+    employee_list.append({
+        '이름': employee_name,
+        '주민등록번호': resident_number,
+        '귀속월': f'{current_year}{current_month}',
+        '근무일수': work_days,
+        '근로시간': work_hours,
+        # 지급항목 (row1)
+        '기본급': to_int(row1[2]),
+        '식대': to_int(row1[3]),
+        '주휴수당': to_int(row1[4]),
+        '연장수당': to_int(row1[5]),
+        '야간수당': to_int(row1[6]),
+        '미지급분': to_int(row1[7]),
+        '휴일기본수당': to_int(row1[8]),
+        '상여': 0,  # 상여는 별도 컬럼 없음
+        '연차수당': 0,
+        # 공제항목 (row1)
+        '국민연금': to_int(row1[9]),
+        '건강보험': to_int(row1[10]),
+        '고용보험': to_int(row1[11]),
+        '장기요양보험': to_int(row1[12]),  # 실제로는 row1[12]가 장기요양보험료
+        '소득세': to_int(row1[13]),
+        '지방소득세': to_int(row1[14]),
+        # 실지급액(차인지급액)
+        '차인지급액': to_int(row3[14])
+    })
+
+    # 사원명 추출 (row1의 1번 컬럼)
+    employee_name = str(row1[1]).replace('(재)', '').strip() if pd.notna(row1[1]) else "확인필요"
+
+    # worker.xlsx에서 주민등록번호와 근무 정보 찾기
+    resident_number = "확인필요"
+    days_per_week = 0
+    hours_per_day = 0
+    if df_worker is not None:
+        worker_info = df_worker[df_worker['이름'] == employee_name]
+        if not worker_info.empty:
+            resident_number = worker_info.iloc[0]['주민등록번호']
+            days_per_week = worker_info.iloc[0]['주당근무일자']
+            hours_per_day = worker_info.iloc[0]['일당근무시간']
+
+    # 근무일수 계산: 주당 7일 근무면 해당 월 전체 일수, 아니면 비율 계산
+    if days_per_week == 7:
+        work_days = days_in_month
+    else:
+        work_days = int((days_in_month / 7) * days_per_week)
+
+    # 근로시간 계산: 근무일수 * 일당근무시간
+    work_hours = work_days * hours_per_day
+
+    # 사원번호와 이름이 모두 있는 경우만 직원으로 인정
+    has_empno = pd.notna(row1[0]) and str(row1[0]).strip() != ''
+    has_name = pd.notna(row1[1]) and str(row1[1]).strip() != ''
+    # row1[1]이 '성명' 또는 '성  명' 등 헤더 문자열이면 직원으로 보지 않음
+    is_header = False
+    if has_name:
+        name_str = str(row1[1]).replace(' ', '').replace('\xa0', '').replace('\x00', '')
+        if name_str in ['성명', '성명']:
+            is_header = True
+    if not (has_empno and has_name) or is_header:
+        continue
+    # 디버그: 차인지급액 원본 값과 변환값 출력
+    print(f"[디버그] {employee_name} 차인지급액 원본: {row3[14]}, 변환값: {to_int(row3[14])}")
+    employee_list.append({
+        '이름': employee_name,
+        '주민등록번호': resident_number,
+        '귀속월': f'{current_year}{current_month}',
+        '근무일수': work_days,
+        '근로시간': work_hours,
+        # 지급항목 (row1)
+        '기본급': to_int(row1[2]),
+        '상여': to_int(row1[6]),
+        '식대': to_int(row1[3]),
+        '주휴수당': to_int(row1[4]),
+        '연장수당': to_int(row1[5]),
+        '야간수당': to_int(row1[10]),
+        '미지급분': to_int(row1[11]),
+        '휴일기본수당': to_int(row1[12]),
+        '연차수당': to_int(row1[13]),
+        '휴일근무수당': to_int(row1[14]),
+        # 공제항목 (row2)
+        '국민연금': to_int(row2[5]),
+        '건강보험': to_int(row2[6]),
+        '고용보험': to_int(row2[7]),
+        '장기요양보험': to_int(row2[8]),
+        '소득세': to_int(row2[9]),
+        '지방소득세': to_int(row2[10]),
+        # 실지급액(차인지급액)
+        '차인지급액': to_int(row3[14])
+    })
+
+
+# employee_list 중복 제거 (직원명 기준)
+unique_employees = []
+seen_names = set()
+for emp in employee_list:
+    if emp['이름'] not in seen_names:
+        unique_employees.append(emp)
+        seen_names.add(emp['이름'])
+employee_list = unique_employees
 
 print(f"  ✓ {len(employee_list)}명의 급여 데이터를 읽었습니다.")
 
@@ -154,23 +271,25 @@ print("\n[2/3] 그리드인_직업급여이체계좌리스트 파일 생성 중.
 account_list_file = f"그리드인_급여이체_{current_year}년{current_month}월.xlsx"
 
 # 계좌 리스트 데이터 준비
+
+# 급여이체 계좌리스트: worker.xlsx에 있는 직원만, 차인지급액을 이체금액으로 사용
 account_data = []
-for idx, emp in enumerate(employee_list, 1):
-    # worker.xlsx에서 은행과 계좌번호 찾기
-    bank = "확인필요"
-    account = "확인필요"
-    total_amount = (emp['기본급'] + emp['상여'] + emp['식대'] + emp['주휴수당'] + 
-                   emp['연장수당'] + emp['야간수당'] + emp['미지급분'] + 
-                   emp['휴일기본수당'] + emp['연차수당'] + emp['휴일근무수당'] -
-                   emp['국민연금'] - emp['건강보험'] - emp['고용보험'] - 
-                   emp['장기요양보험'] - emp['소득세'] - emp['지방소득세'])
-    
+idx = 1
+for emp in employee_list:
+    # worker.xlsx에 있는 직원만 포함
     if df_worker is not None:
         worker_info = df_worker[df_worker['이름'] == emp['이름']]
-        if not worker_info.empty:
-            bank = worker_info.iloc[0]['은행']
-            account = worker_info.iloc[0]['계좌번호']
-    
+        if worker_info.empty:
+            continue  # worker에 없는 직원은 제외
+        bank = worker_info.iloc[0]['은행']
+        account = worker_info.iloc[0]['계좌번호']
+    else:
+        continue
+
+    # 차인지급액: 급여대장 3번째 행(실지급액)에서 추출한 값 사용
+    # employee_list 생성 시 '차인지급액' 항목을 추가해야 함
+    total_amount = emp.get('차인지급액', 0)
+
     # 이름을 영문으로 변환 (특정 이름만)
     display_name = emp['이름']
     if display_name == '김알비나':
@@ -179,7 +298,7 @@ for idx, emp in enumerate(employee_list, 1):
         display_name = 'EMSVETLANA'
     elif display_name == '김엘레나':
         display_name = 'KIMELENA'
-    
+
     account_data.append({
         'A_은행명': bank,
         'B_계좌번호': account,
@@ -190,6 +309,7 @@ for idx, emp in enumerate(employee_list, 1):
         'G_해당월급여': f'{current_month}월급여',
         'H_순번': idx
     })
+    idx += 1
 
 df_account = pd.DataFrame(account_data)
 
@@ -247,22 +367,22 @@ for idx, emp in enumerate(employee_list, 1):
     ws.cell(new_row_num, 3).value = emp['귀속월']
     ws.cell(new_row_num, 4).value = emp['근무일수']
     ws.cell(new_row_num, 5).value = emp['근로시간']
-    ws.cell(new_row_num, 6).value = emp['기본급']
-    ws.cell(new_row_num, 7).value = emp['상여']
-    ws.cell(new_row_num, 8).value = emp['식대']
-    ws.cell(new_row_num, 9).value = emp['주휴수당']
-    ws.cell(new_row_num, 10).value = emp['연장수당']
-    ws.cell(new_row_num, 11).value = emp['야간수당']
-    ws.cell(new_row_num, 12).value = emp['미지급분']
-    ws.cell(new_row_num, 13).value = emp['휴일기본수당']
-    ws.cell(new_row_num, 14).value = emp['연차수당']
-    ws.cell(new_row_num, 15).value = emp['휴일근무수당']
-    ws.cell(new_row_num, 16).value = emp['국민연금']
-    ws.cell(new_row_num, 17).value = emp['건강보험']
-    ws.cell(new_row_num, 18).value = emp['장기요양보험']
-    ws.cell(new_row_num, 19).value = emp['고용보험']
-    ws.cell(new_row_num, 20).value = emp['소득세']
-    ws.cell(new_row_num, 21).value = emp['지방소득세']
+    ws.cell(new_row_num, 6).value = emp['기본급']      # row1[2]
+    ws.cell(new_row_num, 7).value = emp.get('상여', 0) # 상여는 별도 컬럼 없음(0)
+    ws.cell(new_row_num, 8).value = emp['식대']        # row1[3]
+    ws.cell(new_row_num, 9).value = emp['주휴수당']    # row1[4]
+    ws.cell(new_row_num, 10).value = emp['연장수당']   # row1[5]
+    ws.cell(new_row_num, 11).value = emp['야간수당']   # row1[6]
+    ws.cell(new_row_num, 12).value = emp['미지급분']   # row1[7]
+    ws.cell(new_row_num, 13).value = emp['휴일기본수당'] # row1[8]
+    ws.cell(new_row_num, 14).value = 0   # 연차수당 없음(0)
+    ws.cell(new_row_num, 15).value = 0                 # 휴일근무수당 없음(0)
+    ws.cell(new_row_num, 16).value = emp['국민연금']   # row1[9]
+    ws.cell(new_row_num, 17).value = emp['건강보험']   # row1[10]
+    ws.cell(new_row_num, 18).value = emp['장기요양보험'] # row1[12]
+    ws.cell(new_row_num, 19).value = emp['고용보험']   # row1[11]
+    ws.cell(new_row_num, 20).value = emp['소득세']     # row1[13]
+    ws.cell(new_row_num, 21).value = emp['지방소득세'] # row1[14]
     
     # 금액 컬럼에 쉼표 포맷 적용
     for col_idx in range(6, 22):  # F부터 U까지 (6-21)
